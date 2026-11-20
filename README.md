@@ -15,17 +15,38 @@ reveal: hidden domains, organisations, e-mail addresses and exposed infrastructu
 
 ## Install
 
-### Pre-built binary (Linux x86-64)
+### Go one-liner
+
+Needs Go 1.22.2 or newer. The binary lands in `$(go env GOPATH)/bin` (usually `~/go/bin`, make sure it is on your `PATH`).
+
+```sh
+go install github.com/mr-rizwan-syed/argus/cmd/argus@latest
+argus -h
+```
+
+### Pre-built binary from Releases (Linux x86-64)
+
+```sh
+curl -fsSLO https://github.com/mr-rizwan-syed/Argus/releases/latest/download/argus-linux-amd64
+curl -fsSLO https://github.com/mr-rizwan-syed/Argus/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS                  # verify
+chmod +x argus-linux-amd64
+sudo install -m 0755 argus-linux-amd64 /usr/local/bin/argus   # optional
+```
+
+Releases are built by GitHub Actions when a version tag is pushed (`git tag v1.0.1 && git push origin v1.0.1`), see
+[`.github/workflows/release.yml`](.github/workflows/release.yml). Only Linux x86-64 is published: macOS and ARM builds
+compile but have not been tested, and Windows is not supported.
+
+The same binary is also committed in this repository:
 
 ```sh
 git clone git@github.com:mr-rizwan-syed/Argus.git && cd Argus
-sha256sum -c bin/SHA256SUMS            # verify
-chmod +x bin/argus-linux-amd64
-./bin/argus-linux-amd64 -h
-sudo install -m 0755 bin/argus-linux-amd64 /usr/local/bin/argus   # optional
+sha256sum -c bin/SHA256SUMS
+chmod +x bin/argus-linux-amd64 && ./bin/argus-linux-amd64 -h
 ```
 
-The binary is static (`CGO_ENABLED=0`), stripped, and was built with Go 1.24.0 on Linux x86-64 using
+The binary is static (`CGO_ENABLED=0`, no libc needed), stripped, and built with Go 1.24.0 on Linux x86-64 using
 `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" ./cmd/argus`. Building the same source with those
 exact flags and Go version gives a **byte-identical** binary (check with `sha256sum`). Without `-buildvcs=false` Go stamps
 the git revision into the binary, so the file works the same but its hash differs.
