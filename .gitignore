@@ -7,10 +7,7 @@
 *.dll
 *.so
 *.dylib
-CloudRecon
 test.txt
-Caduceus
-CaduceusResults.jsonl
 # Test binary, built with `go test -c`
 *.test
 
@@ -27,4 +24,10 @@ amazon/
 google/
 microsoft/
 all/
-caduceus
+
+# Argus build output, scan checkpoints and results
+/argus
+*.argchk
+*.argchk.tmp
+*.jsonl
+*.log
