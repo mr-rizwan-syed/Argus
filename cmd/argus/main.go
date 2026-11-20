@@ -7,15 +7,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/g0ldencybersec/Caduceus/pkg/scrape"
-	"github.com/g0ldencybersec/Caduceus/pkg/types"
+	"github.com/mr-rizwan-syed/argus/pkg/scrape"
+	"github.com/mr-rizwan-syed/argus/pkg/types"
 )
 
 func main() {
 	args := types.ScrapeArgs{}
 	scrapeUsage := "-i <IPs/CIDRs or File> "
 
-	flag.IntVar(&args.Concurrency, "c", 100, "How many goroutines running concurrently")
+	flag.IntVar(&args.Concurrency, "c", 0, "Goroutine concurrency (0 = auto-detect from CPU/RAM/FD limits)")
 	flag.StringVar(&args.PortList, "p", "443", "TLS ports to check for certificates")
 	flag.IntVar(&args.Timeout, "t", 4, "Timeout for TLS handshake")
 	flag.StringVar(&args.Input, "i", "NONE", "Either IPs & CIDRs separated by commas, or a file with IPs/CIDRs on each line")
@@ -23,14 +23,10 @@ func main() {
 	flag.BoolVar(&args.Help, "h", false, "Show the program usage message")
 	flag.BoolVar(&args.JsonOutput, "j", false, "print cert data as jsonl")
 	flag.BoolVar(&args.PrintWildcards, "wc", false, "print wildcards to stdout")
+	flag.BoolVar(&args.Resume, "resume", false, "Resume from checkpoint (<input>.argchk) if one exists")
 	//flag.BoolVar(&args.Help, "stats", false, "Print stats at the end")
 
 	flag.Parse()
-
-	//need at least 100
-	if args.Concurrency < 100 {
-		args.Concurrency = 100
-	}
 
 	if args.Help {
 		fmt.Println(scrapeUsage)
@@ -38,25 +34,30 @@ func main() {
 		return
 	}
 
-	// If the input is '-', read from stdin
+	// Read stdin into a temp file so large feeds don't buffer in memory.
+	// Temp files are ephemeral so checkpointing is disabled for stdin inputs.
 	if args.Input == "NONE" {
-		var stdinIPs []string
+		tmp, err := os.CreateTemp("", "argus-stdin-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating temp file: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.Remove(tmp.Name())
+
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line != "" {
-				stdinIPs = append(stdinIPs, line)
+				fmt.Fprintln(tmp, line)
 			}
 		}
-
-		// Handle any potential scanning errors
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading from stdin: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Join all the IPs from stdin as a single comma-separated string
-		args.Input = strings.Join(stdinIPs, ",")
+		tmp.Close()
+		args.Input = tmp.Name()
+		args.NoCheckpoint = true
 	}
 
 	args.Ports = strings.Split(args.PortList, ",")

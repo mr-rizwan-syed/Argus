@@ -14,18 +14,22 @@ type ScrapeArgs struct {
 	JsonOutput     bool
 	PrintWildcards bool
 	PrintStats     bool
+	Resume         bool // skip to checkpoint if one exists for args.Input
+	NoCheckpoint   bool // disable auto-checkpoint (set for stdin/temp inputs)
 }
 
 // Result Types
 type CertificateInfo struct {
-	OriginIP         string   `json:"originip"`
-	Organization     []string `json:"org"`
-	OrganizationUnit []string `json:"orgunit"`
-	CommonName       string   `json:"commonName"`
-	SAN              []string `json:"san"`
-	Domains          []string `json:"domains"`
-	Emails           []string `json:"emails"`
-	IPAddrs          []net.IP `json:"ips"`
+	OriginIP            string   `json:"originip"`
+	Organization        []string `json:"org"`
+	OrganizationUnit    []string `json:"orgunit"`
+	CommonName          string   `json:"commonName"`
+	SAN                 []string `json:"san"`
+	Domains             []string `json:"domains"`
+	Emails              []string `json:"emails"`
+	IPAddrs             []net.IP `json:"ips"`
+	CertFingerprint     string   `json:"cert_fingerprint"`
+	PubkeyFingerprint   string   `json:"pubkey_fingerprint"`
 }
 
 type Result struct {
@@ -36,9 +40,3 @@ type Result struct {
 	Certificate *CertificateInfo
 }
 
-// Stats Types
-type Stats struct {
-	hits   int
-	misses int
-	total  int
-}

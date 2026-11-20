@@ -1,3 +1,3 @@
-module github.com/g0ldencybersec/Caduceus
+module github.com/mr-rizwan-syed/argus
 
 go 1.22.2
