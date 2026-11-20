@@ -25,8 +25,10 @@ chmod +x bin/argus-linux-amd64
 sudo install -m 0755 bin/argus-linux-amd64 /usr/local/bin/argus   # optional
 ```
 
-The binary is static (`CGO_ENABLED=0`), stripped, and was built with Go 1.24.0 using
-`go build -trimpath -ldflags "-s -w" ./cmd/argus`.
+The binary is static (`CGO_ENABLED=0`), stripped, and was built with Go 1.24.0 on Linux x86-64 using
+`CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" ./cmd/argus`. Building the same source with those
+exact flags and Go version gives a **byte-identical** binary (check with `sha256sum`). Without `-buildvcs=false` Go stamps
+the git revision into the binary, so the file works the same but its hash differs.
 
 ### Build from source
 
@@ -34,9 +36,12 @@ Needs Go 1.22.2 or newer. No C compiler is required.
 
 ```sh
 git clone git@github.com:mr-rizwan-syed/Argus.git && cd Argus
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o argus ./cmd/argus
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o argus ./cmd/argus
 ./argus -h
 ```
+
+(`-trimpath -buildvcs=false -ldflags "-s -w"` only make the binary smaller and reproducible; a plain
+`go build -o argus ./cmd/argus` works too.)
 
 Cross-compiling works for Linux and macOS (`GOOS=linux|darwin`, `GOARCH=amd64|arm64`). **Windows is not supported**: the
 file-descriptor handling uses Unix-only system calls.
