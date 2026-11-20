@@ -13,6 +13,43 @@ reveal: hidden domains, organisations, e-mail addresses and exposed infrastructu
 
 > Use it only on networks you own or are authorised to test. See [Responsible use](#responsible-use).
 
+## How it works
+
+For every `address:port` in your target list Argus does exactly three things:
+
+1. **Connects** with an ordinary TCP connection (from the operating system's normal socket API).
+2. **Completes the TLS handshake** like any client would, without verifying the certificate chain, so self-signed,
+   expired and internal certificates are read too.
+3. **Reads the certificate the server presents, then closes the connection.** Nothing is sent after the handshake: no
+   HTTP request, no banner grab, no payload. (Checked from the server side: one connection, a TLS 1.3 handshake, and
+   zero bytes of application data before the client closes.)
+
+For a bare IP no server name (SNI) is sent, so the server answers with its **default certificate**. That is what exposes
+virtual hosts and internal names that DNS never told you about. If a target is a hostname, that name is sent as SNI.
+
+CIDRs are expanded as they are scanned, never held in memory as a list, and the scan runs with
+[adaptive concurrency](#concurrency) so it does not exhaust the machine it runs on.
+
+### Why that matters
+
+- **Light touch.** One connection and no request per target, and a single port (443) unless you ask for more with `-p`.
+  Tools in the same space typically do more to every target: sweep many ports, send an HTTP request after connecting, or
+  repeat the handshake to test every protocol version and cipher suite.
+- **It is not a port scanner.** Argus only visits the `address:port` pairs you give it. It never sweeps ports to find
+  what is open; if you need discovery, run a port scanner first and feed the results to Argus as `ip:port` lines.
+- **No raw packets, no root.** It uses normal TCP connections (no SYN scanning, no libpcap, no special privileges), so it
+  runs as an ordinary user on any machine that can open outbound connections.
+- **Names, owners and pivots in one pass.** Subject names, organisations, e-mail addresses and IPs from each certificate,
+  plus certificate and public-key fingerprints to link hosts that share a key.
+- **One static binary, standard library only.** Nothing to install beyond the executable.
+
+### What it is not
+
+Argus is **not stealthy**. Each probe is a real TCP connection and TLS handshake, which the target's firewall, IDS or
+logs can record as a connection that opens and closes without a request, and a large sweep is visible by sheer volume.
+"Low noise" here means fewer packets and no application traffic compared with port or HTTP scanning, not invisibility.
+Scan only what you are authorised to scan (see [Responsible use](#responsible-use)).
+
 ## Install
 
 ### Go one-liner
