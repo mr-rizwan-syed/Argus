@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
@@ -16,24 +15,11 @@ import (
 
 var domainRegex = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
 
-// GetSSLCertContext dials addr over TLS and returns the first peer certificate.
-// The context deadline covers the entire operation — TCP connect + TLS handshake —
-// so a server that accepts the socket but stalls the handshake cannot hold a worker
-// beyond the caller's deadline.
+// GetSSLCertContext dials addr over TLS and returns the first peer certificate (see Probe for the version that also says why a probe failed).
+// The context deadline covers the entire operation: TCP connect + TLS handshake.
 func GetSSLCertContext(ctx context.Context, addr string) (*x509.Certificate, error) {
-	conn, err := (&tls.Dialer{
-		Config: &tls.Config{InsecureSkipVerify: true},
-	}).DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	if len(certs) == 0 {
-		return nil, fmt.Errorf("no certificates presented by %s", addr)
-	}
-	return certs[0], nil
+	cert, _, err := Probe(ctx, addr, SockOpts{})
+	return cert, err
 }
 
 // IPsFromCIDR generates a slice of IP strings from the given CIDR.

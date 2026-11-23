@@ -140,6 +140,11 @@ A name can appear twice: the certificate's common name is also listed among its 
 | `-wc` | off | Include wildcard names (`*.example.test`) in the domain output. |
 | `-debug` | off | Also print failures and timeouts, on stdout. |
 | `-resume` | off | Continue from the checkpoint of a previous run on the same input file. |
+| `-order <mode>` | `sequential` | `random` walks every address:port in a shuffled order (a keyed bijection, O(1) memory), so no network sees a burst of probes. IPv4 addresses and CIDRs only. |
+| `-seed <n>` | `0` (pick) | Seed of the random order. It is printed at the start and kept in the checkpoint; a resume uses the seed it started with. |
+| `-rate <n>` | `0` (no cap) | Most probes started per second. Without it only concurrency bounds the speed, which lets a fast machine outrun its own NIC, connection tracker or the targets' networks. |
+| `-syncnt <n>` | `0` (kernel) | `TCP_SYNCNT`: give a connect up after n SYN retransmits (the kernel's default is 6, about two minutes). Linux only. |
+| `-fast-close` | off | `SO_LINGER` 0: close with a reset instead of FIN and TIME_WAIT, so finished probes leave nothing behind in the kernel. Linux only. |
 | `-h` | | Show the usage message. |
 
 ### Input formats
@@ -187,6 +192,12 @@ Hosts that do not answer, or do not speak TLS, print nothing (add `-debug` to se
 [argus] done  256/256 (100.0%)  hits=2                                          # at the end
 ```
 
+The progress and `done` lines end with one counter per reason a probe produced no certificate:
+`connect_timeout` (nobody answered the SYN: the normal fate of an unused address), `refused`, `unreachable`, `reset`,
+`local_err` (**this machine** ran out of descriptors, buffers, ports or memory: the probe says nothing about the
+target), `handshake_timeout` (TCP connected, TLS stalled), `tls_fail` (TCP connected, then not TLS, or a TLS version or
+cipher Argus does not offer) and `no_cert`. A scan with a noticeable `local_err` lost replies.
+
 `hits` is the number of certificates found, `rate` the addresses probed per second. The `done` line is the summary:
 **if the percentage is below 100 the scan was cut short** (for example by SIGTERM), so do not treat the results as
 complete. Input problems are reported as `[argus] input error: ...`.
@@ -208,6 +219,14 @@ descriptor limit).
 
 For large scans raise the limit first, for example `ulimit -n 50000`. As a reference, about 60 to 70 million addresses
 per hour on a 4 vCPU cloud VM was measured in real use; your network and the targets decide the rest.
+
+## Random order
+
+Sequential scanning sends thousands of probes to one /24 within milliseconds, which is what rate limiters and intrusion
+detection at a network's edge react to. `-order random` spreads the same probes so a network sees a trickle. Every
+address:port is still probed exactly once. In this mode the checkpoint (`<input>.argchk.rand`) is a counter and the seed,
+not a line number, and `-resume` goes back a few concurrency-fulls (the probes that were in flight), so a resumed run can
+contain duplicate results; deduplicate by `originip`.
 
 ## Checkpoint and resume
 

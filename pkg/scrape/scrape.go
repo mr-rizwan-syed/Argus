@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mr-rizwan-syed/argus/pkg/adaptive"
+	"github.com/mr-rizwan-syed/argus/pkg/order"
+	"github.com/mr-rizwan-syed/argus/pkg/pace"
 	"github.com/mr-rizwan-syed/argus/pkg/types"
 	"github.com/mr-rizwan-syed/argus/pkg/utils"
 	"github.com/mr-rizwan-syed/argus/pkg/workers"
@@ -98,8 +100,52 @@ func RunScrape(args types.ScrapeArgs) {
 		}
 	}
 
+	// Random order: a shuffled walk over every address:port. Its checkpoint is a COUNTER (how many positions of the shuffled order were started),
+	// kept with the seed in <input>.argchk.rand; a resume goes back a few concurrency-fulls because the probes in flight were not finished.
+	var space *order.Space
+	var perm *order.Perm
+	var startIdx uint64
+	randomCkpt := ""
+	seed := args.Seed
+	if args.Order == "random" {
+		var err error
+		space, err = order.Build(args.Input, args.Ports)
+		if err != nil || space.Total() == 0 {
+			if err == nil {
+				err = fmt.Errorf("nothing to scan")
+			}
+			fmt.Fprintf(os.Stderr, "[argus] input error: %v\n", err)
+			os.Exit(2)
+		}
+		if !args.NoCheckpoint {
+			if _, e := os.Stat(args.Input); e == nil {
+				randomCkpt = args.Input + ".argchk.rand"
+			}
+		}
+		if args.Resume && randomCkpt != "" {
+			if sd, k, e := readRandomCheckpoint(randomCkpt); e == nil && k > 0 {
+				seed = sd
+				back := uint64(lim.Current()) * 4
+				if k > back {
+					startIdx = k - back
+				}
+				fmt.Fprintf(os.Stderr, "[argus] resuming the random order at position %d (seed %d)\n", startIdx, seed)
+			} else {
+				fmt.Fprintln(os.Stderr, "[argus] no checkpoint found — starting from position 0")
+			}
+		}
+		if seed == 0 {
+			seed = uint64(time.Now().UnixNano())
+		}
+		perm = order.NewPerm(space.Total(), seed)
+		fmt.Fprintf(os.Stderr, "[argus] order=random seed=%d addresses=%d\n", seed, space.Total())
+	}
+
 	// Pre-count total addresses for percentage progress (pure bit-math, fast).
 	totalAddrs := utils.CountInputFrom(args.Input, args.Ports, skipLines)
+	if space != nil {
+		totalAddrs = int64(space.Total() - startIdx)
+	}
 
 	// ── Input feeder ─────────────────────────────────────────────────────────
 	var onLine func(int)
@@ -112,6 +158,20 @@ func RunScrape(args types.ScrapeArgs) {
 	}
 	go func() {
 		defer close(inputChannel)
+		if space != nil {
+			total := space.Total()
+			for k := startIdx; k < total; k++ {
+				select {
+				case inputChannel <- space.At(perm.At(k)):
+				case <-baseCtx.Done():
+					return
+				}
+				if randomCkpt != "" && k%100000 == 0 {
+					writeRandomCheckpoint(randomCkpt, seed, k)
+				}
+			}
+			return
+		}
 		if err := utils.IntakeFunctionFrom(inputChannel, args.Ports, args.Input, skipLines, onLine); err != nil {
 			fmt.Fprintf(os.Stderr, "[argus] input error: %v\n", err)
 			cancelBase()
@@ -120,6 +180,15 @@ func RunScrape(args types.ScrapeArgs) {
 
 	// ── Live progress reporter (stderr, every 5 s) ───────────────────────────
 	var totalScanned, totalHits atomic.Int64
+	var fails [utils.FailKinds]atomic.Int64
+	failLine := func() string { // why probes failed, for the platform to judge the scan: local_err > 0 means OUR side lost probes
+		return fmt.Sprintf("  connect_timeout=%d refused=%d unreachable=%d reset=%d local_err=%d handshake_timeout=%d tls_fail=%d no_cert=%d",
+			fails[utils.FailConnectTimeout].Load(), fails[utils.FailRefused].Load(), fails[utils.FailUnreachable].Load(), fails[utils.FailReset].Load(),
+			fails[utils.FailLocal].Load(), fails[utils.FailHandshakeTimeout].Load(), fails[utils.FailTLS].Load(), fails[utils.FailNoCert].Load())
+	}
+	sockOpts := utils.SockOpts{SynRetries: args.SynRetries, FastClose: args.FastClose}
+	pacer := pace.New(args.Rate)
+	defer pacer.Stop()
 	go func() {
 		start := time.Now()
 		tick := time.NewTicker(5 * time.Second)
@@ -135,11 +204,11 @@ func RunScrape(args types.ScrapeArgs) {
 				rate    := float64(scanned) / elapsed
 				if totalAddrs > 0 {
 					pct := float64(scanned) / float64(totalAddrs) * 100
-					fmt.Fprintf(os.Stderr, "[argus] %d/%d (%.1f%%)  hits=%d  rate=%.0f/s  concurrency=%d\n",
-						scanned, totalAddrs, pct, hits, rate, lim.Current())
+					fmt.Fprintf(os.Stderr, "[argus] %d/%d (%.1f%%)  hits=%d  rate=%.0f/s  concurrency=%d%s\n",
+						scanned, totalAddrs, pct, hits, rate, lim.Current(), failLine())
 				} else {
-					fmt.Fprintf(os.Stderr, "[argus] scanned=%d  hits=%d  rate=%.0f/s  concurrency=%d\n",
-						scanned, hits, rate, lim.Current())
+					fmt.Fprintf(os.Stderr, "[argus] scanned=%d  hits=%d  rate=%.0f/s  concurrency=%d%s\n",
+						scanned, hits, rate, lim.Current(), failLine())
 				}
 			}
 		}
@@ -157,6 +226,7 @@ SCAN:
 		default:
 		}
 
+		pacer.Wait(baseCtx)
 		lim.Acquire()
 		tlsWg.Add(1)
 		go func(addr string) {
@@ -166,15 +236,19 @@ SCAN:
 			ctx, cancel := context.WithTimeout(baseCtx, time.Duration(args.Timeout)*time.Second)
 			defer cancel()
 
-			cert, err := utils.GetSSLCertContext(ctx, addr)
+			cert, kind, err := utils.Probe(ctx, addr, sockOpts)
 			totalScanned.Add(1)
 
 			if err != nil {
+				if baseCtx.Err() == nil { // a probe cut short by our own shutdown says nothing about the target
+					fails[kind].Add(1)
+				}
 				resultChannel <- types.Result{
-					IP:      addr,
-					Hit:     false,
-					Timeout: isTimeout(err),
-					Error:   err,
+					IP:       addr,
+					Hit:      false,
+					Timeout:  isTimeout(err),
+					FailKind: int(kind),
+					Error:    err,
 				}
 				return
 			}
@@ -222,17 +296,20 @@ SCAN:
 		if pct > 100 {
 			pct = 100
 		}
-		fmt.Fprintf(os.Stderr, "[argus] done  %d/%d (%.1f%%)  hits=%d\n",
-			scanned, totalAddrs, pct, hits)
+		fmt.Fprintf(os.Stderr, "[argus] done  %d/%d (%.1f%%)  hits=%d%s\n",
+			scanned, totalAddrs, pct, hits, failLine())
 	} else {
-		fmt.Fprintf(os.Stderr, "[argus] done  scanned=%d  hits=%d\n",
-			scanned, hits)
+		fmt.Fprintf(os.Stderr, "[argus] done  scanned=%d  hits=%d%s\n",
+			scanned, hits, failLine())
 	}
 
 	// Remove checkpoint on clean exit; leave it intact on SIGINT so the user
 	// can resume with -resume.
 	if checkpointFile != "" && baseCtx.Err() == nil {
 		os.Remove(checkpointFile)
+	}
+	if randomCkpt != "" && baseCtx.Err() == nil {
+		os.Remove(randomCkpt)
 	}
 
 }
@@ -249,4 +326,21 @@ func isTimeout(err error) bool {
 		return t.Timeout()
 	}
 	return false
+}
+
+// The random order's checkpoint: "<seed> <position>".
+func writeRandomCheckpoint(file string, seed, k uint64) {
+	tmp := file + ".tmp"
+	if err := os.WriteFile(tmp, []byte(fmt.Sprintf("%d %d\n", seed, k)), 0644); err == nil {
+		os.Rename(tmp, file)
+	}
+}
+
+func readRandomCheckpoint(file string) (seed, k uint64, err error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return 0, 0, err
+	}
+	_, err = fmt.Sscanf(string(data), "%d %d", &seed, &k)
+	return seed, k, err
 }

@@ -23,6 +23,11 @@ func main() {
 	flag.BoolVar(&args.Help, "h", false, "Show the program usage message")
 	flag.BoolVar(&args.JsonOutput, "j", false, "print cert data as jsonl")
 	flag.BoolVar(&args.PrintWildcards, "wc", false, "print wildcards to stdout")
+	flag.StringVar(&args.Order, "order", "sequential", "Probe order: sequential (input order) or random (spreads load so no network sees a burst)")
+	flag.Uint64Var(&args.Seed, "seed", 0, "Random order: seed (0 = pick one; it is printed and kept in the checkpoint)")
+	flag.IntVar(&args.Rate, "rate", 0, "Most probes started per second (0 = no cap)")
+	flag.IntVar(&args.SynRetries, "syncnt", 0, "Give up a connect after this many SYN retransmits (0 = kernel default, about 2 minutes; Linux)")
+	flag.BoolVar(&args.FastClose, "fast-close", false, "Close sockets with a reset instead of FIN + TIME_WAIT (Linux)")
 	flag.BoolVar(&args.Resume, "resume", false, "Resume from checkpoint (<input>.argchk) if one exists")
 	//flag.BoolVar(&args.Help, "stats", false, "Print stats at the end")
 
@@ -60,6 +65,10 @@ func main() {
 		args.NoCheckpoint = true
 	}
 
+	if args.Order != "sequential" && args.Order != "random" {
+		fmt.Fprintf(os.Stderr, "[argus] input error: -order must be sequential or random (got %q)\n", args.Order)
+		os.Exit(2)
+	}
 	args.Ports = strings.Split(args.PortList, ",")
 
 	scrape.RunScrape(args)
