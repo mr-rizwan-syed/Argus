@@ -295,6 +295,13 @@ Rules carry no personal data. The file is `{"version": 1, "rules": [{"id": "acme
 with ETag; plain HTTP only for localhost). Leave a field out rather than giving it an empty list: an empty value makes the
 whole file refused.
 
+**Large known lists.** `known` holds at most 50 hosts. For thousands, put hashes in a top-level `sets` object and name it from a rule with
+`known_set` (or `known_sets`, up to four): `{"sets": {"mine": {"salt": "any text", "hashes": ["<32 hex>", ...]}}}`. A host is stored as the first
+16 bytes of SHA-256 of `<salt>\n<lower-case host>`, in hex, so the file holds no names. A hit whose name, or any parent domain of it, is in the
+set is dropped; the set is looked up only for hits, never for every certificate (about a microsecond with 100,000 hosts), and before the
+daily cap counts anything, so known hosts never use the cap up. `"kinds": ["subdomain"]` limits a rule to the kinds of hit you want
+(`subdomain`, `keyword`, `lookalike`, `org`); an unwanted kind is dropped before the cap too.
+
 Each match is one JSON line: `rule_id`, `kind` (`subdomain`, `keyword`, `lookalike`, `org`), `domain`, `matched`, `score`
 (0-100), `reasons` in plain words, `names`, `new_domain`, the issuer and subject organization, validity dates, the
 certificate fingerprint, the log and when it was seen. Useful flags: `-min-score` (default 50), `-daily-cap` per rule (500),

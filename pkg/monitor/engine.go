@@ -52,7 +52,8 @@ type compiledRule struct {
 	known   []string
 	hasApex map[string]bool // the registrable domains of the apexes
 	orgs    []string        // normalised
-	kset    *HashSet        // the large hashed known set (rules.go: known_set), or nil
+	ksets   []*HashSet      // the large hashed known sets (rules.go: known_set, known_sets)
+	kinds   map[string]bool // the kinds this rule may report, or nil for all
 }
 
 type kwRef struct {
@@ -107,7 +108,16 @@ func Compile(set *RuleSet, opts EngineOptions) (*Engine, error) {
 		cr := compiledRule{id: r.ID, hasApex: map[string]bool{}, known: r.Known}
 		e.byID[r.ID] = idx
 		if r.KnownSet != "" {
-			cr.kset = set.Sets[r.KnownSet]
+			cr.ksets = append(cr.ksets, set.Sets[r.KnownSet])
+		}
+		for _, n := range r.KnownSets {
+			cr.ksets = append(cr.ksets, set.Sets[n])
+		}
+		if len(r.Kinds) > 0 {
+			cr.kinds = map[string]bool{}
+			for _, k := range r.Kinds {
+				cr.kinds[k] = true
+			}
 		}
 		for ai, a := range r.Apexes {
 			_, label, suffix, ok := splitRegistrable(a)
@@ -300,13 +310,25 @@ func (e *Engine) Match(en ctlog.Entry, out []Match) []Match {
 	return e.dropKnown(out, base)
 }
 
-// dropKnown removes, from the hits found for this certificate (out[base:]), those whose name is in the hit rule's hashed known set. It runs only on hits, so a
-// set of any size costs a few lookups per hit and nothing per certificate; and it runs before the daily cap counts anything, so known hosts never use it up.
+// dropKnown removes, from the hits found for this certificate (out[base:]), those the hit's rule does not want: a kind it is not limited to, or a name that is in one of
+// its hashed known sets. It runs only on hits, so a set of any size costs a few lookups per hit and nothing per certificate, and it runs before the daily cap counts
+// anything, so unwanted hits never use the cap up.
 func (e *Engine) dropKnown(out []Match, base int) []Match {
 	kept := out[:base]
 	for i := base; i < len(out); i++ {
-		if ri, ok := e.byID[out[i].RuleID]; ok {
-			if set := e.rules[ri].kset; set != nil && out[i].Kind != KindRuleNoisy && set.Covers(out[i].Domain) {
+		if ri, ok := e.byID[out[i].RuleID]; ok && out[i].Kind != KindRuleNoisy {
+			r := &e.rules[ri]
+			if r.kinds != nil && !r.kinds[out[i].Kind] {
+				continue
+			}
+			known := false
+			for _, set := range r.ksets {
+				if set.Covers(out[i].Domain) {
+					known = true
+					break
+				}
+			}
+			if known {
 				continue
 			}
 		}

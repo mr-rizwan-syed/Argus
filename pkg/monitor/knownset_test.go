@@ -172,3 +172,23 @@ func BenchmarkKnownSetCovers(b *testing.B) {
 		hs.Covers("a.b.unknown.example.org")
 	}
 }
+
+func TestKindsLimitWhatARuleReportsAndKnownSetsCombine(t *testing.T) {
+	a, b := KnownHash("sa", "a.example.com"), KnownHash("sb", "b.example.com")
+	raw, _ := json.Marshal(RuleFile{Version: 1, Rules: []Rule{{ID: "r1", Apexes: []string{"example.com"}, Keywords: []string{"example"}, KnownSets: []string{"sa", "sb"}, Kinds: []string{"subdomain"}}},
+		Sets: map[string]KnownSet{"sa": {Salt: "sa", Hashes: []string{a}}, "sb": {Salt: "sb", Hashes: []string{b}}}})
+	set, err := ParseRules(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits := hitsFor(t, set, ctlog.Entry{Names: []string{"a.example.com", "b.example.com", "c.example.com", "example-evil.net", "exarnple.com"}})
+	if len(hits) != 1 || hits[0].Domain != "c.example.com" || hits[0].Kind != KindSubdomain {
+		t.Fatalf("only the unknown subdomain may be reported (keyword and look-alike hits are not wanted, a and b are known): %+v", hits)
+	}
+	if _, err := ParseRules([]byte(`{"version":1,"rules":[{"id":"r","apexes":["example.com"],"kinds":["everything"]}]}`)); err == nil {
+		t.Fatal("an unknown kind was accepted")
+	}
+	if _, err := ParseRules([]byte(`{"version":1,"rules":[{"id":"r","apexes":["example.com"],"known_sets":["missing"]}]}`)); err == nil {
+		t.Fatal("a missing set in known_sets was accepted")
+	}
+}

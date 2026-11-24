@@ -39,6 +39,11 @@ type Rule struct {
 	// KnownSet names a set (RuleFile.Sets) of hashed hosts that are also known: a LARGE list (thousands of hosts) that stays private because only hashes are
 	// held. It is looked up only for a hit, never for every certificate: a hit whose name, or a parent of it, is in the set is dropped before it is counted.
 	KnownSet string `json:"known_set,omitempty"`
+	// KnownSets names several sets at once (a hit is dropped when ANY of them covers it): a big hosts set shared by some rules and a small set of own domains for others.
+	KnownSets []string `json:"known_sets,omitempty"`
+	// Kinds restricts which kinds of hit the rule may report (subdomain, keyword, lookalike, org). Empty = all. A hit of another kind is dropped before the daily cap
+	// counts it, so an unwanted kind never uses the cap up.
+	Kinds []string `json:"kinds,omitempty"`
 }
 
 // KnownSet is a set of hashed hosts. A host is hashed as KnownHash(Salt, name); the hashes are lower-case hex.
@@ -183,6 +188,24 @@ func (r Rule) Validate(index int) (Rule, *RuleError) {
 	if out.KnownSet != "" && !idPattern.MatchString(out.KnownSet) {
 		return bad("known_set", "a set name is 1 to 64 characters from letters, digits and . _ : - (got %q)", r.KnownSet)
 	}
+	if len(r.KnownSets) > 4 {
+		return bad("known_sets", "at most 4 sets per rule (got %d)", len(r.KnownSets))
+	}
+	for _, n := range r.KnownSets {
+		n = strings.TrimSpace(n)
+		if !idPattern.MatchString(n) {
+			return bad("known_sets", "a set name is 1 to 64 characters from letters, digits and . _ : - (got %q)", n)
+		}
+		out.KnownSets = append(out.KnownSets, n)
+	}
+	for _, k := range r.Kinds {
+		switch k {
+		case KindSubdomain, KindKeyword, KindLookalike, KindOrg:
+			out.Kinds = append(out.Kinds, k)
+		default:
+			return bad("kinds", "unknown kind %q: use subdomain, keyword, lookalike or org", k)
+		}
+	}
 	if !idPattern.MatchString(out.ID) {
 		return bad("id", "an id is 1 to 64 characters from letters, digits and . _ : - (got %q)", r.ID)
 	}
@@ -318,9 +341,15 @@ func ParseRules(data []byte) (*RuleSet, error) {
 			}
 			continue
 		}
-		if n.KnownSet != "" && set.Sets[n.KnownSet] == nil {
+		missing := ""
+		for _, name := range append([]string{n.KnownSet}, n.KnownSets...) {
+			if name != "" && set.Sets[name] == nil {
+				missing = name
+			}
+		}
+		if missing != "" {
 			if len(errs) < 20 {
-				errs = append(errs, RuleError{Index: i + 1, ID: n.ID, Field: "known_set", Msg: fmt.Sprintf("there is no set named %q in \"sets\"", n.KnownSet)})
+				errs = append(errs, RuleError{Index: i + 1, ID: n.ID, Field: "known_set", Msg: fmt.Sprintf("there is no set named %q in \"sets\"", missing)})
 			}
 			continue
 		}
