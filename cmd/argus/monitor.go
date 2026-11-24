@@ -1,4 +1,4 @@
-//go:build monitor
+//go:build !nomonitor
 
 package main
 

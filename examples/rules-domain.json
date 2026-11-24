@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "aws-hosts",
+      "name": "new hosts under amazonaws.com (a very busy domain: sure to show something)",
+      "apexes": ["amazonaws.com"]
+    },
+    {
+      "id": "msft-lookalikes",
+      "name": "microsoft.com: new hosts and look-alikes, leaving out Microsoft's own domains",
+      "apexes": ["microsoft.com"],
+      "keywords": ["microsoft"],
+      "known": ["www.microsoft.com", "login.microsoftonline.com", "microsoft-int.com"]
+    }
+  ]
+}

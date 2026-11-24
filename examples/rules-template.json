@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "acme",
+      "name": "Acme Corp: everything about one organization in one rule",
+      "apexes": ["acme.com", "acme.io"],
+      "keywords": ["acmecorp", "acmepay"],
+      "orgs": ["Acme Corp", "Acme Payments"],
+      "known": ["www.acme.com", "mail.acme.com"]
+    }
+  ]
+}

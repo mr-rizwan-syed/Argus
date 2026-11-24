@@ -267,17 +267,19 @@ awk -F'"' '!seen[$4]++' results.jsonl > results.dedup.jsonl
 - Run it on a throw-away cloud VM close to the targets for big scans; scanning from a home connection is slow and noisy.
 - Use `-t 2` on fast networks to finish sooner, and a larger value for slow or distant targets.
 
-## Certificate Transparency monitor (optional build)
+## Certificate Transparency monitor
 
 `argus monitor` is a second mode that reads the public Certificate Transparency logs and reports the new certificates that
 match your rules: new hosts of a domain you watch, look-alikes of a brand, and certificates that name an organization. It
-does not scan anything and never connects to the names it finds. It is **opt-in at build time**, so the normal scanner
-binary (and the source package a scan server builds) does not contain it:
+does not scan anything and never connects to the names it finds. It is part of every normal build, so the install is the same:
 
 ```bash
-go build -tags monitor -o argus ./cmd/argus     # with the monitor
-go build -o argus ./cmd/argus                   # without it: `argus monitor` prints that this build has none and exits 2
+go install github.com/mr-rizwan-syed/argus/cmd/argus@main      # @latest gives the newest tagged release, which may predate the monitor
+argus monitor -rules examples/rules.json -stdout 2>monitor.log | jq --unbuffered -r '"\(.kind)\t\(.score)\t\(.domain)"'
 ```
+
+Ready-made rule files to try, with what each one should show, are in [`examples/`](examples/README.md). To send matches
+somewhere else instead:
 
 ```bash
 argus monitor -rules rules.json -out matches.jsonl
@@ -290,17 +292,22 @@ A rule is one organization: up to 5 `apexes` (its domains), 5 `keywords` (brand 
 domains), 5 `orgs` (names looked for in certificate subjects) and 50 `known` hosts that are its own and never reported.
 Rules carry no personal data. The file is `{"version": 1, "rules": [{"id": "acme", "apexes": ["acme.com"], "keywords":
 ["acme"], "orgs": ["Acme Inc"], "known": ["www.acme.com"]}]}` and is re-read when it changes (`-rules-url`: every minute,
-with ETag; plain HTTP only for localhost).
+with ETag; plain HTTP only for localhost). Leave a field out rather than giving it an empty list: an empty value makes the
+whole file refused.
 
-Each match is one JSON line: `rule_id`, `kind`, `domain`, `matched`, `score` (0-100), `reasons` in plain words, `names`,
-`new_domain`, the issuer and subject organization, validity dates, the certificate fingerprint, the log and when it was
-seen. Useful flags: `-min-score` (default 50), `-daily-cap` per rule (500), `-dedupe-window` (24 h), `-log-state` (a restart
-continues where it stopped), `-backfill`, `-include-operator` / `-exclude-operator`, `-spool-dir` (undelivered batches wait
-there, bounded by `-spool-max-mb`) and `-stats-file`. `-source replay -replay file.jsonl` feeds saved entries through the
-same rules, for testing. Run `argus monitor -h` for all of them.
+Each match is one JSON line: `rule_id`, `kind` (`subdomain`, `keyword`, `lookalike`, `org`), `domain`, `matched`, `score`
+(0-100), `reasons` in plain words, `names`, `new_domain`, the issuer and subject organization, validity dates, the
+certificate fingerprint, the log and when it was seen. Useful flags: `-min-score` (default 50), `-daily-cap` per rule (500),
+`-dedupe-window` (24 h), `-log-state` (a restart continues where it stopped), `-backfill`, `-include-operator` /
+`-exclude-operator`, `-spool-dir` (undelivered batches wait there, bounded by `-spool-max-mb`) and `-stats-file`.
+`-source replay -replay file.jsonl` feeds saved entries through the same rules, for testing. Run `argus monitor -h` for all
+of them.
 
-Expect real load: the logs together produce well over a thousand certificates a second, which keeps more than one CPU
-core busy. Run it on its own server, not next to a scan.
+Expect real load: the logs together produce well over a thousand certificates a second. Measured on a 2 vCPU server it
+used about a fifth of both cores and 60 MB of memory. Run it on its own server, not next to a scan.
+
+`-tags nomonitor` leaves the monitor out and compiles a stub instead (`argus monitor` then says this build has none). Use it
+when you ship the scanner somewhere with a tight size limit; CertAtlas builds its scan servers that way.
 
 ## Responsible use
 
@@ -312,7 +319,7 @@ that apply to you. You are responsible for how you use it.
 
 ```
 cmd/argus/        command line entry point
-cmd/argus/monitor.go   the `argus monitor` command (build tag `monitor`)
+cmd/argus/monitor.go   the `argus monitor` command (left out by `-tags nomonitor`)
 pkg/ctlog/        reads Certificate Transparency logs
 pkg/monitor/      rules, matching, deduplication, outputs
 pkg/scrape/       the scan pipeline: feeder, TLS workers, output writer, progress, checkpoint

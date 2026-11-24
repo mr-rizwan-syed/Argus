@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "test-brands",
+      "name": "busy brands, for a live test",
+      "keywords": ["paypal", "microsoft", "amazon", "netflix"]
+    }
+  ]
+}

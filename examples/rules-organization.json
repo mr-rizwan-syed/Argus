@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "rules": [
+    { "id": "google", "name": "certificates whose subject names Google", "orgs": ["Google LLC"] },
+    { "id": "microsoft", "name": "certificates whose subject names Microsoft", "orgs": ["Microsoft Corporation"] }
+  ]
+}
