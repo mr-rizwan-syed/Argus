@@ -19,6 +19,8 @@ const (
 	MaxKeywords    = 5
 	MaxOrgs        = 5
 	MaxKnown       = 50
+	MaxKnownSets   = 20000  // sets in one file
+	MaxKnownHashes = 500000 // hashes in one set
 	MinKeywordLen  = 4
 	MaxKeywordLen  = 40
 	MinOrgLen      = 3
@@ -34,12 +36,22 @@ type Rule struct {
 	Keywords []string `json:"keywords,omitempty"` // brand words looked for inside other people's domains
 	Orgs     []string `json:"orgs,omitempty"`     // organization names looked for in certificate subjects
 	Known    []string `json:"known,omitempty"`    // hosts or domains that are the organization's own: never reported, under them nothing is reported either
+	// KnownSet names a set (RuleFile.Sets) of hashed hosts that are also known: a LARGE list (thousands of hosts) that stays private because only hashes are
+	// held. It is looked up only for a hit, never for every certificate: a hit whose name, or a parent of it, is in the set is dropped before it is counted.
+	KnownSet string `json:"known_set,omitempty"`
+}
+
+// KnownSet is a set of hashed hosts. A host is hashed as KnownHash(Salt, name); the hashes are lower-case hex.
+type KnownSet struct {
+	Salt   string   `json:"salt"`
+	Hashes []string `json:"hashes"`
 }
 
 // RuleFile is the JSON document a rules source serves.
 type RuleFile struct {
-	Version int    `json:"version"`
-	Rules   []Rule `json:"rules"`
+	Version int                 `json:"version"`
+	Rules   []Rule              `json:"rules"`
+	Sets    map[string]KnownSet `json:"sets,omitempty"`
 }
 
 // RuleError says which rule and which field was refused, and why.
@@ -167,7 +179,10 @@ func (r Rule) Validate(index int) (Rule, *RuleError) {
 	bad := func(field, format string, args ...any) (Rule, *RuleError) {
 		return Rule{}, &RuleError{Index: index, ID: r.ID, Field: field, Msg: fmt.Sprintf(format, args...)}
 	}
-	out := Rule{ID: strings.TrimSpace(r.ID), Name: strings.TrimSpace(r.Name)}
+	out := Rule{ID: strings.TrimSpace(r.ID), Name: strings.TrimSpace(r.Name), KnownSet: strings.TrimSpace(r.KnownSet)}
+	if out.KnownSet != "" && !idPattern.MatchString(out.KnownSet) {
+		return bad("known_set", "a set name is 1 to 64 characters from letters, digits and . _ : - (got %q)", r.KnownSet)
+	}
 	if !idPattern.MatchString(out.ID) {
 		return bad("id", "an id is 1 to 64 characters from letters, digits and . _ : - (got %q)", r.ID)
 	}
@@ -255,6 +270,7 @@ func (r Rule) Validate(index int) (Rule, *RuleError) {
 // RuleSet is a validated, normalised set of rules.
 type RuleSet struct {
 	Rules []Rule
+	Sets  map[string]*HashSet
 }
 
 // ParseRules reads a rules document ({"version":1,"rules":[...]}). Every rule is validated; the file is refused as a whole when any rule is bad,
@@ -275,6 +291,19 @@ func ParseRules(data []byte) (*RuleSet, error) {
 	set := &RuleSet{Rules: make([]Rule, 0, len(f.Rules))}
 	ids := map[string]int{}
 	var errs RuleErrors
+	if len(f.Sets) > MaxKnownSets {
+		return nil, fmt.Errorf("the rules file has %d known sets: at most %d", len(f.Sets), MaxKnownSets)
+	}
+	for name, ks := range f.Sets {
+		hs, err := newHashSet(name, ks)
+		if err != nil {
+			return nil, err
+		}
+		if set.Sets == nil {
+			set.Sets = map[string]*HashSet{}
+		}
+		set.Sets[name] = hs
+	}
 	for i, r := range f.Rules {
 		n, e := r.Validate(i + 1)
 		if e != nil {
@@ -286,6 +315,12 @@ func ParseRules(data []byte) (*RuleSet, error) {
 		if first, dup := ids[n.ID]; dup {
 			if len(errs) < 20 {
 				errs = append(errs, RuleError{Index: i + 1, ID: n.ID, Field: "id", Msg: fmt.Sprintf("already used by rule #%d", first)})
+			}
+			continue
+		}
+		if n.KnownSet != "" && set.Sets[n.KnownSet] == nil {
+			if len(errs) < 20 {
+				errs = append(errs, RuleError{Index: i + 1, ID: n.ID, Field: "known_set", Msg: fmt.Sprintf("there is no set named %q in \"sets\"", n.KnownSet)})
 			}
 			continue
 		}

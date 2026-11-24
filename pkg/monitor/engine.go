@@ -52,6 +52,7 @@ type compiledRule struct {
 	known   []string
 	hasApex map[string]bool // the registrable domains of the apexes
 	orgs    []string        // normalised
+	kset    *HashSet        // the large hashed known set (rules.go: known_set), or nil
 }
 
 type kwRef struct {
@@ -69,6 +70,7 @@ type orgRef struct{ rule int32 }
 // Engine is a compiled rule set. It is immutable, so any number of goroutines may call Match at once.
 type Engine struct {
 	rules    []compiledRule
+	byID     map[string]int32 // rule id -> index, for the known-set filter
 	apex     map[string][]int32
 	known    map[string][]int32
 	ac       *automaton
@@ -94,7 +96,7 @@ func Compile(set *RuleSet, opts EngineOptions) (*Engine, error) {
 	if opts.MinScore <= 0 {
 		opts.MinScore = 50
 	}
-	e := &Engine{apex: map[string][]int32{}, known: map[string][]int32{}, label: map[string][]lookRef{}, skel: map[string][]lookRef{},
+	e := &Engine{byID: map[string]int32{}, apex: map[string][]int32{}, known: map[string][]int32{}, label: map[string][]lookRef{}, skel: map[string][]lookRef{},
 		hyph: map[string][]lookRef{}, glued: map[string][]lookRef{}, d1: map[string][]lookRef{}, d2: map[string][]lookRef{}, orgs: map[string][]int32{},
 		minLab: 1 << 30, minScore: opts.MinScore}
 	e.pool.New = func() any { return &scratch{} }
@@ -103,6 +105,10 @@ func Compile(set *RuleSet, opts EngineOptions) (*Engine, error) {
 	for ri, r := range set.Rules {
 		idx := int32(ri)
 		cr := compiledRule{id: r.ID, hasApex: map[string]bool{}, known: r.Known}
+		e.byID[r.ID] = idx
+		if r.KnownSet != "" {
+			cr.kset = set.Sets[r.KnownSet]
+		}
 		for ai, a := range r.Apexes {
 			_, label, suffix, ok := splitRegistrable(a)
 			if !ok {
@@ -277,6 +283,7 @@ func (e *Engine) Match(en ctlog.Entry, out []Match) []Match {
 	if len(names) > maxNamesPerEntry {
 		names = names[:maxNamesPerEntry]
 	}
+	base := len(out)
 	for _, raw := range names {
 		name, wildcard := raw, false
 		if strings.HasPrefix(name, "*.") {
@@ -290,7 +297,22 @@ func (e *Engine) Match(en ctlog.Entry, out []Match) []Match {
 	if en.SubjectO != "" {
 		out = e.matchOrg(&en, out)
 	}
-	return out
+	return e.dropKnown(out, base)
+}
+
+// dropKnown removes, from the hits found for this certificate (out[base:]), those whose name is in the hit rule's hashed known set. It runs only on hits, so a
+// set of any size costs a few lookups per hit and nothing per certificate; and it runs before the daily cap counts anything, so known hosts never use it up.
+func (e *Engine) dropKnown(out []Match, base int) []Match {
+	kept := out[:base]
+	for i := base; i < len(out); i++ {
+		if ri, ok := e.byID[out[i].RuleID]; ok {
+			if set := e.rules[ri].kset; set != nil && out[i].Kind != KindRuleNoisy && set.Covers(out[i].Domain) {
+				continue
+			}
+		}
+		kept = append(kept, out[i])
+	}
+	return kept
 }
 
 func (e *Engine) matchName(s *scratch, en *ctlog.Entry, name string, wildcard bool, out []Match) []Match {
