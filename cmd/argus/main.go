@@ -12,6 +12,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "monitor" {
+		os.Exit(runMonitor(os.Args[2:]))
+	}
 	args := types.ScrapeArgs{}
 	scrapeUsage := "-i <IPs/CIDRs or File> "
 

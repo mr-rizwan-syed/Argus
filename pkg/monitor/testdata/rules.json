@@ -1,0 +1,4 @@
+{"version":1,"rules":[
+ {"id":"acme","name":"Acme","apexes":["acme.com"],"keywords":["acme"],"orgs":["Acme Corp"],"known":["status.acme.com"]},
+ {"id":"paypal","name":"PayPal","apexes":["paypal.com"],"keywords":["paypal"]}
+]}

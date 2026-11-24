@@ -267,6 +267,41 @@ awk -F'"' '!seen[$4]++' results.jsonl > results.dedup.jsonl
 - Run it on a throw-away cloud VM close to the targets for big scans; scanning from a home connection is slow and noisy.
 - Use `-t 2` on fast networks to finish sooner, and a larger value for slow or distant targets.
 
+## Certificate Transparency monitor (optional build)
+
+`argus monitor` is a second mode that reads the public Certificate Transparency logs and reports the new certificates that
+match your rules: new hosts of a domain you watch, look-alikes of a brand, and certificates that name an organization. It
+does not scan anything and never connects to the names it finds. It is **opt-in at build time**, so the normal scanner
+binary (and the source package a scan server builds) does not contain it:
+
+```bash
+go build -tags monitor -o argus ./cmd/argus     # with the monitor
+go build -o argus ./cmd/argus                   # without it: `argus monitor` prints that this build has none and exits 2
+```
+
+```bash
+argus monitor -rules rules.json -out matches.jsonl
+argus monitor -rules-url https://platform.example/api/ct/rules -rules-secret-file /etc/argus/rules.secret \
+              -post-url https://platform.example/api/ct/matches -post-secret-file /etc/argus/post.secret \
+              -spool-dir /var/lib/argus/spool -log-state /var/lib/argus/ct-state.json -stats-file /var/lib/argus/ct-stats.json
+```
+
+A rule is one organization: up to 5 `apexes` (its domains), 5 `keywords` (brand words looked for inside other people's
+domains), 5 `orgs` (names looked for in certificate subjects) and 50 `known` hosts that are its own and never reported.
+Rules carry no personal data. The file is `{"version": 1, "rules": [{"id": "acme", "apexes": ["acme.com"], "keywords":
+["acme"], "orgs": ["Acme Inc"], "known": ["www.acme.com"]}]}` and is re-read when it changes (`-rules-url`: every minute,
+with ETag; plain HTTP only for localhost).
+
+Each match is one JSON line: `rule_id`, `kind`, `domain`, `matched`, `score` (0-100), `reasons` in plain words, `names`,
+`new_domain`, the issuer and subject organization, validity dates, the certificate fingerprint, the log and when it was
+seen. Useful flags: `-min-score` (default 50), `-daily-cap` per rule (500), `-dedupe-window` (24 h), `-log-state` (a restart
+continues where it stopped), `-backfill`, `-include-operator` / `-exclude-operator`, `-spool-dir` (undelivered batches wait
+there, bounded by `-spool-max-mb`) and `-stats-file`. `-source replay -replay file.jsonl` feeds saved entries through the
+same rules, for testing. Run `argus monitor -h` for all of them.
+
+Expect real load: the logs together produce well over a thousand certificates a second, which keeps more than one CPU
+core busy. Run it on its own server, not next to a scan.
+
 ## Responsible use
 
 Argus makes ordinary TLS connections to every address you give it. Scan only systems and networks you own or have
@@ -277,6 +312,9 @@ that apply to you. You are responsible for how you use it.
 
 ```
 cmd/argus/        command line entry point
+cmd/argus/monitor.go   the `argus monitor` command (build tag `monitor`)
+pkg/ctlog/        reads Certificate Transparency logs
+pkg/monitor/      rules, matching, deduplication, outputs
 pkg/scrape/       the scan pipeline: feeder, TLS workers, output writer, progress, checkpoint
 pkg/adaptive/     adaptive concurrency limiter
 pkg/utils/        TLS dialing, input parsing, CIDR expansion, fingerprints, checkpoint files
