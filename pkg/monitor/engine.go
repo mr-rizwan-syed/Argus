@@ -40,6 +40,8 @@ confirm security alert suspended suspend validate password reset customer online
 // EngineOptions tune matching.
 type EngineOptions struct {
 	MinScore int // hits scoring less are dropped (default 50)
+	// Logf, when set, is told about a rule value that was left out instead of refusing the whole set (an apex that is itself a public suffix).
+	Logf func(format string, args ...any)
 }
 
 type apexInfo struct {
@@ -119,15 +121,20 @@ func Compile(set *RuleSet, opts EngineOptions) (*Engine, error) {
 				cr.kinds[k] = true
 			}
 		}
-		for ai, a := range r.Apexes {
+		for _, a := range r.Apexes {
 			_, label, suffix, ok := splitRegistrable(a)
 			if !ok {
-				return nil, fmt.Errorf("rule %q: %q has no registrable domain", r.ID, a)
+				// One bad value must never take every other rule down with it: an apex that is itself a public suffix (github.io, co.uk) has no
+				// registrable label to watch, so it is skipped here and the rest of the file stays live.
+				if opts.Logf != nil {
+					opts.Logf("rule %q: %q has no registrable domain (it is a public suffix): skipped", r.ID, a)
+				}
+				continue
 			}
 			cr.apexes = append(cr.apexes, apexInfo{name: a, label: label, suffix: suffix})
 			cr.hasApex[label+"."+suffix] = true
 			e.apex[a] = append(e.apex[a], idx)
-			e.indexLabel(lookRef{rule: idx, apex: int16(ai)}, label, suffix)
+			e.indexLabel(lookRef{rule: idx, apex: int16(len(cr.apexes) - 1)}, label, suffix)
 		}
 		for _, k := range r.Known {
 			e.known[k] = append(e.known[k], idx)
@@ -616,7 +623,12 @@ func (e *Engine) evalCandidate(s *scratch, c string, isReg bool, suffix string) 
 		}
 	}
 	// a typing slip: one edit (two for long labels). Variants of the label with one or two letters deleted are looked up in the index.
-	if e.maxLab == 0 || n < e.minLab-1 || n > e.maxLab+2 {
+	// a label of 9+ letters also matches two edits away, so when one is watched a candidate may be two letters shorter than the shortest watched label
+	minN := e.minLab - 1
+	if e.maxLong > 0 {
+		minN = e.minLab - 2
+	}
+	if e.maxLab == 0 || n < minN || n > e.maxLab+2 {
 		return
 	}
 	check := func(refs []lookRef) {
@@ -733,21 +745,34 @@ func (e *Engine) matchOrg(en *ctlog.Entry, out []Match) []Match {
 			continue
 		}
 		rule := &e.rules[h.rule]
-		foreign := ""
+		// the new asset is the first name that is neither the rule's own nor in one of its hashed known sets (a later name may be new
+		// although an earlier one is known: dropKnown looks at the reported name only)
+		foreign, wildcard := "", false
 		for _, raw := range en.Names {
 			name := strings.TrimPrefix(raw, "*.")
-			if name != "" && !e.ruleCovers(rule, name) {
-				foreign = name
-				break
+			if name == "" || e.ruleCovers(rule, name) || e.setsCover(rule, name) {
+				continue
 			}
+			foreign, wildcard = name, strings.HasPrefix(raw, "*.")
+			break
 		}
 		if foreign == "" {
 			continue
 		}
 		out = append(out, newMatch(en, rule, KindOrg, foreign, h.org, h.score,
-			fmt.Sprintf("the certificate's organization %q names %q", en.SubjectO, h.org), strings.HasPrefix(foreign, "*.")))
+			fmt.Sprintf("the certificate's organization %q names %q", en.SubjectO, h.org), wildcard))
 	}
 	return out
+}
+
+// setsCover reports whether one of the rule's hashed known sets covers the name (the name or a parent of it is known).
+func (e *Engine) setsCover(r *compiledRule, name string) bool {
+	for _, set := range r.ksets {
+		if set.Covers(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) ruleCovers(r *compiledRule, name string) bool {

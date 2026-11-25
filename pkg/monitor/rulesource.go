@@ -63,6 +63,10 @@ type URLRules struct {
 
 func (u *URLRules) String() string { return u.URL }
 
+// Forget drops the remembered ETag, so the next Load fetches the document again. The monitor calls it when a document that parsed could not be compiled: an
+// ETag kept for a refused document would answer 304 for ever and the fix on the server would never be read.
+func (u *URLRules) Forget() { u.etag = "" }
+
 // CheckRulesURL refuses an address that would send the secret in the clear.
 func CheckRulesURL(raw string) error {
 	pu, err := url.Parse(raw)

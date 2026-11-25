@@ -207,7 +207,8 @@ func NewPostSink(cfg PostConfig) (*PostSink, error) {
 		cfg.Queue = 20000
 	}
 	if cfg.Client == nil {
-		cfg.Client = &http.Client{Timeout: 15 * time.Second}
+		// a redirect is a failure, never a delivery: a POST sent on to a login page that answers 200 would count as delivered and the matches would be lost
+		cfg.Client = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	if cfg.Retries <= 0 {
 		cfg.Retries = 3

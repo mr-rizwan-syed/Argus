@@ -87,8 +87,11 @@ func (m *Monitor) loadRules(ctx context.Context, first bool) error {
 	if set == nil {
 		return fmt.Errorf("no rules from %s", m.cfg.Rules)
 	}
-	eng, err := Compile(set, EngineOptions{MinScore: m.cfg.MinScore})
+	eng, err := Compile(set, EngineOptions{MinScore: m.cfg.MinScore, Logf: m.cfg.Logf})
 	if err != nil {
+		if f, ok := m.cfg.Rules.(interface{ Forget() }); ok {
+			f.Forget()
+		}
 		return err
 	}
 	m.engine.Store(eng)
