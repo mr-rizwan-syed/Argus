@@ -79,6 +79,13 @@ func CheckRulesURL(raw string) error {
 	return errors.New("the rules URL must be https (plain http is only accepted for localhost): the secret travels with every request")
 }
 
+// FetchError marks a failure to GET the rules (no connection, a bad HTTP status, a cut-off body), as opposed to a file that arrived and was refused. The first is the
+// network's or the platform's trouble and heals by itself; the second means somebody's rules are wrong. They are counted apart (Stats.RuleFetchErrs, RuleReloadErrs).
+type FetchError struct{ Err error }
+
+func (e *FetchError) Error() string { return e.Err.Error() }
+func (e *FetchError) Unwrap() error { return e.Err }
+
 func (u *URLRules) Load(ctx context.Context) (*RuleSet, bool, error) {
 	client := u.Client
 	if client == nil {
@@ -98,18 +105,18 @@ func (u *URLRules) Load(ctx context.Context) (*RuleSet, bool, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, false, err
+		return nil, false, &FetchError{err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotModified {
 		return nil, false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("the rules server answered HTTP %d", resp.StatusCode)
+		return nil, false, &FetchError{fmt.Errorf("the rules server answered HTTP %d", resp.StatusCode)}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRulesBytes+1))
 	if err != nil {
-		return nil, false, err
+		return nil, false, &FetchError{err}
 	}
 	if len(data) > maxRulesBytes {
 		return nil, false, fmt.Errorf("the rules document is longer than %d bytes", maxRulesBytes)

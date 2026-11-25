@@ -29,7 +29,8 @@ type Stats struct {
 	Rejected       atomic.Int64 // matches the platform refused for good (a 400, 413 or 422)
 	PostFailures   atomic.Int64
 	RuleReloads    atomic.Int64
-	RuleReloadErrs atomic.Int64
+	RuleReloadErrs atomic.Int64 // a rules file arrived and was refused (the previous rules stay)
+	RuleFetchErrs  atomic.Int64 // the rules could not be fetched at all (network, bad HTTP status)
 	QueueDepth     atomic.Int64
 	Rules          atomic.Int64
 }
@@ -70,6 +71,7 @@ type Snapshot struct {
 	PostFailures   int64     `json:"post_failures"`
 	RuleReloads    int64     `json:"rule_reloads"`
 	RuleReloadErrs int64     `json:"rule_reload_errors"`
+	RuleFetchErrs  int64     `json:"rule_fetch_errors"`
 	QueueDepth     int64     `json:"queue_depth"`
 	Rules          int64     `json:"rules"`
 	LagSeconds     float64   `json:"lag_seconds,omitempty"`
@@ -80,7 +82,7 @@ func (s *Stats) snapshot(now time.Time, prev *Snapshot, lag time.Duration) Snaps
 		Subdomain: s.Subdomain.Load(), Keyword: s.Keyword.Load(), Lookalike: s.Lookalike.Load(), Org: s.Org.Load(), Suppressed: s.Suppressed.Load(),
 		NoisyRules: s.NoisyRules.Load(), DroppedEntries: s.DroppedEntries.Load(), DroppedMatches: s.DroppedMatches.Load(), Delivered: s.Delivered.Load(),
 		Spooled: s.Spooled.Load(), SpoolDropped: s.SpoolDropped.Load(), Rejected: s.Rejected.Load(), PostFailures: s.PostFailures.Load(),
-		RuleReloads: s.RuleReloads.Load(), RuleReloadErrs: s.RuleReloadErrs.Load(), QueueDepth: s.QueueDepth.Load(), Rules: s.Rules.Load(),
+		RuleReloads: s.RuleReloads.Load(), RuleReloadErrs: s.RuleReloadErrs.Load(), RuleFetchErrs: s.RuleFetchErrs.Load(), QueueDepth: s.QueueDepth.Load(), Rules: s.Rules.Load(),
 		LagSeconds: lag.Seconds()}
 	if prev != nil {
 		if dt := now.Sub(prev.Time).Seconds(); dt > 0 {

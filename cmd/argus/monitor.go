@@ -93,6 +93,7 @@ func runMonitor(args []string) int {
 		spoolDir      = fs.String("spool-dir", "", "Where undelivered batches wait (default: a folder next to -out or in the temp directory)")
 		spoolMaxMB    = fs.Int("spool-max-mb", 100, "Disk the spool may use; the oldest batch is dropped beyond it")
 		statsFile     = fs.String("stats-file", "", "Write the statistics here (JSON, atomic) every interval")
+		statsPost     = fs.String("stats-post-url", "", "POST the statistics (a heartbeat: rate, lag, drops) to this URL every interval, signed like the matches (needs -post-secret-file)")
 		statsInterval = fs.Duration("stats-interval", time.Minute, "How often statistics are logged and written")
 		workers       = fs.Int("workers", 2, "Matching goroutines")
 		queue         = fs.Int("queue", 20000, "Entries waiting for a worker")
@@ -212,9 +213,24 @@ func runMonitor(args []string) int {
 		return fail("no output: give -out, -stdout or -post-url")
 	}
 
+	var onStats func(monitor.Snapshot)
+	if *statsPost != "" {
+		if *postSecret == "" {
+			return fail("-stats-post-url needs -post-secret-file")
+		}
+		secret, err := readSecret(*postSecret)
+		if err != nil {
+			return fail("-post-secret-file: %v", err)
+		}
+		poster, err := monitor.NewStatsPoster(*statsPost, secret, logf)
+		if err != nil {
+			return fail("-stats-post-url: %v", err)
+		}
+		onStats = poster.Send
+	}
 	m := monitor.New(monitor.Config{
 		Source: src, Rules: rules, Sinks: sinks, MinScore: *minScore, DailyCap: *dailyCap, DedupeWindow: *dedupeWindow,
-		Workers: *workers, Queue: *queue, StatsInterval: *statsInterval, StatsFile: *statsFile, Logf: logf, Stats: stats,
+		Workers: *workers, Queue: *queue, StatsInterval: *statsInterval, StatsFile: *statsFile, OnStats: onStats, Logf: logf, Stats: stats,
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

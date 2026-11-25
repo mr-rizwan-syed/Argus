@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ type Config struct {
 	ReloadEvery    time.Duration // default 60 s
 	StatsInterval  time.Duration // default 60 s
 	StatsFile      string
+	OnStats        func(Snapshot) // called every interval with the snapshot (the heartbeat to the platform); must not block
 
 	Logf  func(format string, args ...any)
 	Stats *Stats
@@ -118,8 +120,14 @@ func (m *Monitor) Run(ctx context.Context) error {
 			select {
 			case <-t.C:
 				if err := m.loadRules(auxCtx, false); err != nil {
-					m.stats.RuleReloadErrs.Add(1)
-					m.cfg.Logf("rules NOT reloaded (keeping the last good set): %v", err)
+					var fe *FetchError
+					if errors.As(err, &fe) {
+						m.stats.RuleFetchErrs.Add(1)
+						m.cfg.Logf("rules could not be fetched (keeping the last good set): %v", err)
+					} else {
+						m.stats.RuleReloadErrs.Add(1)
+						m.cfg.Logf("rules REFUSED (keeping the last good set): %v", err)
+					}
 				}
 			case <-auxCtx.Done():
 				return
@@ -142,6 +150,9 @@ func (m *Monitor) Run(ctx context.Context) error {
 			sn := m.stats.snapshot(now, prev, lag)
 			prev = &sn
 			m.cfg.Logf("%s", sn.Line())
+			if m.cfg.OnStats != nil {
+				m.cfg.OnStats(sn)
+			}
 			if m.cfg.StatsFile != "" {
 				if err := WriteStatsFile(m.cfg.StatsFile, sn); err != nil {
 					m.cfg.Logf("could not write the stats file: %v", err)

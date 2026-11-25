@@ -1,6 +1,10 @@
 package monitor
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -104,5 +108,32 @@ func TestNormalizeOrg(t *testing.T) {
 		if got := NormalizeOrg(in); got != want {
 			t.Errorf("NormalizeOrg(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestURLRulesTellsAFailedFetchFromARefusedFile(t *testing.T) {
+	// the platform answers 530 (the tunnel is down): a fetch error, not a refusal
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(530) }))
+	defer down.Close()
+	_, _, err := (&URLRules{URL: down.URL}).Load(context.Background())
+	var fe *FetchError
+	if !errors.As(err, &fe) {
+		t.Fatalf("an HTTP 530 must be a FetchError, got %T: %v", err, err)
+	}
+	// nothing is listening at all
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := gone.URL
+	gone.Close()
+	if _, _, err := (&URLRules{URL: url}).Load(context.Background()); !errors.As(err, &fe) {
+		t.Fatalf("a refused connection must be a FetchError, got %T", err)
+	}
+	// a file that arrives but is bad is NOT a fetch error
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version":1,"rules":[{"id":"r","apexes":[""]}]}`))
+	}))
+	defer bad.Close()
+	_, _, err = (&URLRules{URL: bad.URL}).Load(context.Background())
+	if err == nil || errors.As(err, &fe) {
+		t.Fatalf("a refused file must be an ordinary error, got %T: %v", err, err)
 	}
 }
