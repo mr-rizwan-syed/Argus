@@ -187,6 +187,10 @@ func RunScrape(args types.ScrapeArgs) {
 			fails[utils.FailLocal].Load(), fails[utils.FailHandshakeTimeout].Load(), fails[utils.FailTLS].Load(), fails[utils.FailNoCert].Load())
 	}
 	sockOpts := utils.SockOpts{SynRetries: args.SynRetries, FastClose: args.FastClose}
+	if args.ConnectTimeout > 0 {
+		sockOpts.ConnectTimeout = time.Duration(args.ConnectTimeout) * time.Second
+		sockOpts.HandshakeTimeout = time.Duration(args.Timeout) * time.Second
+	}
 	pacer := pace.New(args.Rate)
 	defer pacer.Stop()
 	go func() {
@@ -233,7 +237,11 @@ SCAN:
 			defer tlsWg.Done()
 			defer lim.Release()
 
-			ctx, cancel := context.WithTimeout(baseCtx, time.Duration(args.Timeout)*time.Second)
+			probeTimeout := time.Duration(args.Timeout) * time.Second
+			if args.ConnectTimeout > 0 {
+				probeTimeout += time.Duration(args.ConnectTimeout) * time.Second // the connect and the handshake each have their own deadline inside Probe
+			}
+			ctx, cancel := context.WithTimeout(baseCtx, probeTimeout)
 			defer cancel()
 
 			cert, kind, err := utils.Probe(ctx, addr, sockOpts)

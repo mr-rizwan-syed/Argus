@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"syscall"
+	"time"
 )
 
 // Fail says WHY a probe produced no certificate. Telling "nobody answered" from "something answered and it was not TLS" from "this machine
@@ -38,18 +39,35 @@ func (f Fail) String() string { return failNames[f] }
 type SockOpts struct {
 	SynRetries int  // TCP_SYNCNT: give up the connect after this many SYN retransmits (the kernel default is 6, about two minutes)
 	FastClose  bool // SO_LINGER 0: close with a reset instead of FIN + TIME_WAIT, so finished probes leave nothing behind in the kernel
+	// Split deadlines (both 0 = one deadline for the whole probe, the ctx's own, as before). With them, an address that never answers the SYN is given up after
+	// ConnectTimeout, while a host that DID connect gets HandshakeTimeout for the TLS handshake: most of the IPv4 space is silent, so the connect deadline sets the
+	// scan speed, and a slow handshake on a long path (which the single short deadline used to drop) no longer costs it.
+	ConnectTimeout   time.Duration
+	HandshakeTimeout time.Duration
 }
 
 // Probe dials addr, does a TLS handshake without verification and returns the first certificate. On failure it also returns the reason.
 func Probe(ctx context.Context, addr string, opts SockOpts) (*x509.Certificate, Fail, error) {
 	d := &net.Dialer{Control: sockControl(opts)}
-	raw, err := d.DialContext(ctx, "tcp", addr)
+	dialCtx := ctx
+	if opts.ConnectTimeout > 0 {
+		var cancel context.CancelFunc
+		dialCtx, cancel = context.WithTimeout(ctx, opts.ConnectTimeout)
+		defer cancel()
+	}
+	raw, err := d.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return nil, classifyDial(err), err
 	}
 	conn := tls.Client(raw, &tls.Config{InsecureSkipVerify: true})
 	defer conn.Close()
-	if err := conn.HandshakeContext(ctx); err != nil {
+	hsCtx := ctx
+	if opts.HandshakeTimeout > 0 {
+		var cancel context.CancelFunc
+		hsCtx, cancel = context.WithTimeout(ctx, opts.HandshakeTimeout)
+		defer cancel()
+	}
+	if err := conn.HandshakeContext(hsCtx); err != nil {
 		return nil, classifyTLS(err), err
 	}
 	certs := conn.ConnectionState().PeerCertificates

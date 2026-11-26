@@ -20,7 +20,8 @@ func main() {
 
 	flag.IntVar(&args.Concurrency, "c", 0, "Goroutine concurrency (0 = auto-detect from CPU/RAM/FD limits)")
 	flag.StringVar(&args.PortList, "p", "443", "TLS ports to check for certificates")
-	flag.IntVar(&args.Timeout, "t", 4, "Timeout for TLS handshake")
+	flag.IntVar(&args.Timeout, "t", 4, "Timeout for TLS handshake (with -ct: seconds for the handshake AFTER the connect; without -ct: the deadline for the whole probe)")
+	flag.IntVar(&args.ConnectTimeout, "ct", 0, "Seconds to wait for the TCP connect (0 = no separate connect deadline). Silent addresses are given up after this, hosts that connected get -t for the handshake")
 	flag.StringVar(&args.Input, "i", "NONE", "Either IPs & CIDRs separated by commas, or a file with IPs/CIDRs on each line")
 	flag.BoolVar(&args.Debug, "debug", false, "Add this flag if you want to see failures/timeouts")
 	flag.BoolVar(&args.Help, "h", false, "Show the program usage message")

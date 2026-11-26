@@ -7,6 +7,7 @@ type ScrapeArgs struct {
 	Concurrency    int
 	Ports          []string
 	Timeout        int
+	ConnectTimeout int // seconds for the TCP connect (0 = one deadline for the whole probe, Timeout)
 	PortList       string
 	Help           bool
 	Input          string
